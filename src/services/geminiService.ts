@@ -230,39 +230,52 @@ export async function analyzeWheelImage(
 
   onProgress?.('Identificando Puntos Palanca y Puntos Impacto...');
 
-  // Primary model configured to gemini-flash-lite-latest for high quota and reliability
-  const PRIMARY_MODEL = 'gemini-flash-lite-latest';
+  // Primary model configured to gemini-flash-latest with 503 retry tolerance
+  const PRIMARY_MODEL = 'gemini-flash-latest';
   let rawText = '';
   let lastError: any = null;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: PRIMARY_MODEL,
-      contents: [
-        {
-          parts: [
-            {
-              inlineData: {
-                mimeType: mimeType || 'image/jpeg',
-                data: cleanBase64
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: PRIMARY_MODEL,
+        contents: [
+          {
+            parts: [
+              {
+                inlineData: {
+                  mimeType: mimeType || 'image/jpeg',
+                  data: cleanBase64
+                }
+              },
+              {
+                text: `${ANALYSIS_SYSTEM_PROMPT}\n\nAnaliza detenidamente la imagen adjunta y genera el objeto JSON completo según las instrucciones.`
               }
-            },
-            {
-              text: `${ANALYSIS_SYSTEM_PROMPT}\n\nAnaliza detenidamente la imagen adjunta y genera el objeto JSON completo según las instrucciones.`
-            }
-          ]
+            ]
+          }
+        ],
+        config: {
+          temperature: 0.2,
+          responseMimeType: 'application/json'
         }
-      ],
-      config: {
-        temperature: 0.2,
-        responseMimeType: 'application/json'
-      }
-    });
+      });
 
-    rawText = response.text || '';
-  } catch (sdkErr: any) {
-    lastError = sdkErr;
-    console.error('Gemini analysis failed with gemini-flash-lite-latest:', sdkErr?.message || sdkErr);
+      rawText = response.text || '';
+      if (rawText) break;
+    } catch (sdkErr: any) {
+      lastError = sdkErr;
+      const errStr = String(sdkErr?.message || sdkErr);
+      console.error(`Gemini analysis attempt ${attempt} failed with gemini-flash-latest:`, errStr);
+
+      const is503 = errStr.includes('503') || errStr.toLowerCase().includes('service unavailable') || errStr.toLowerCase().includes('high demand') || errStr.toLowerCase().includes('overloaded');
+      if (is503 && attempt < maxAttempts) {
+        onProgress?.('Servidor de Google ocupado (503). Reintentando en 2 segundos...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        continue;
+      }
+      break;
+    }
   }
 
   if (!rawText) {
@@ -271,8 +284,11 @@ export async function analyzeWheelImage(
     if (msg.includes('quota') || msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
       throw new Error('Límite de cuota excedido en la API de Gemini (429). Por favor espera unos minutos o utiliza una API Key con facturación.');
     }
+    if (msg.includes('503') || msg.toLowerCase().includes('service unavailable')) {
+      throw new Error('El servidor de Gemini está temporalmente ocupado (503). Por favor intenta de nuevo en un momento.');
+    }
     if (msg.includes('404') || msg.includes('not found') || msg.includes('no longer available')) {
-      throw new Error('El modelo solicitado no está disponible. Se configuró gemini-3.8-flash.');
+      throw new Error('El modelo solicitado no está disponible. Se configuró gemini-flash-latest.');
     }
     throw lastError || new Error('No se pudo procesar la imagen con la API de Gemini.');
   }
