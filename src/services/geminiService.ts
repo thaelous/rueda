@@ -1,7 +1,8 @@
 import { GoogleGenAI } from '@google/genai';
 import { ExecutiveReport } from '../types/leadership';
 
-const STORAGE_KEY = 'gemini_api_key';
+const STORAGE_KEY = 'USER_GEMINI_KEY';
+const LEGACY_STORAGE_KEY = 'gemini_api_key';
 
 export function getStoredApiKey(): string {
   // First priority: VITE_GEMINI_API_KEY from environment
@@ -9,8 +10,8 @@ export function getStoredApiKey(): string {
   if (envKey && typeof envKey === 'string' && envKey.trim().length > 0) {
     return envKey.trim();
   }
-  // Second priority: localStorage
-  const stored = localStorage.getItem(STORAGE_KEY);
+  // Second priority: USER_GEMINI_KEY or legacy gemini_api_key in localStorage
+  const stored = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
   return stored ? stored.trim() : '';
 }
 
@@ -20,6 +21,7 @@ export function saveApiKey(key: string): void {
 
 export function removeStoredApiKey(): void {
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(LEGACY_STORAGE_KEY);
 }
 
 const ANALYSIS_SYSTEM_PROMPT = `
@@ -216,129 +218,76 @@ export async function analyzeWheelImage(
   mimeType: string = 'image/jpeg',
   onProgress?: (step: string) => void
 ): Promise<ExecutiveReport> {
+  const apiKey = getStoredApiKey();
+  if (!apiKey || !apiKey.trim()) {
+    throw new Error('MISSING_API_KEY');
+  }
+
+  const cleanBase64 = base64Data.replace(/^data:image\/[a-zA-Z+]+;base64,/, '');
   const fullPrompt = `${ANALYSIS_SYSTEM_PROMPT}\n\nAnaliza detenidamente la imagen adjunta y genera el objeto JSON completo según las instrucciones.`;
 
   onProgress?.('Inspeccionando trazos y geometría de la rueda...');
 
-  let rawText = '';
+  const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
+  const modelName = 'gemini-flash-latest';
 
-  // 1. Try Netlify Function proxy first (recommended for production on Netlify)
   try {
-    const fnResponse = await fetch('/.netlify/functions/gemini', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        base64Data,
-        mimeType,
-        prompt: fullPrompt,
-      }),
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents: [
+        {
+          parts: [
+            {
+              inlineData: {
+                mimeType: mimeType || 'image/jpeg',
+                data: cleanBase64
+              }
+            },
+            {
+              text: fullPrompt
+            }
+          ]
+        }
+      ],
+      config: {
+        temperature: 0.2,
+        responseMimeType: 'application/json'
+      }
     });
 
-    if (fnResponse.ok) {
-      const fnData = await fnResponse.json();
-      if (fnData && fnData.text) {
-        rawText = fnData.text;
-      }
-    } else {
-      console.warn('Netlify function proxy returned status:', fnResponse.status, 'Falling back to direct client SDK...');
-    }
-  } catch (proxyErr) {
-    console.warn('Netlify function proxy not available or failed. Falling back to direct client SDK...', proxyErr);
-  }
-
-  // 2. If Netlify proxy didn't succeed, fall back to direct client SDK call (for AI Studio preview or local dev)
-  if (!rawText) {
-    const enteredApiKey = getStoredApiKey();
-    if (!enteredApiKey || !enteredApiKey.trim()) {
-      throw new Error('MISSING_API_KEY');
-    }
-
-    const apiKey = enteredApiKey.trim();
-    const cleanBase64 = base64Data.replace(/^data:image\/[a-zA-Z+]+;base64,/, '');
-
-    onProgress?.('Identificando Puntos Palanca y Puntos Impacto...');
-
-    const ai = new GoogleGenAI({ apiKey });
-    const PRIMARY_MODEL = 'gemini-flash-latest';
-    let lastError: any = null;
-
-    const maxAttempts = 2;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const response = await ai.models.generateContent({
-          model: PRIMARY_MODEL,
-          contents: [
-            {
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: mimeType || 'image/jpeg',
-                    data: cleanBase64
-                  }
-                },
-                {
-                  text: fullPrompt
-                }
-              ]
-            }
-          ],
-          config: {
-            temperature: 0.2,
-            responseMimeType: 'application/json'
-          }
-        });
-
-        rawText = response.text || '';
-        if (rawText) break;
-      } catch (sdkErr: any) {
-        lastError = sdkErr;
-        const errStr = String(sdkErr?.message || sdkErr);
-        console.error(`Gemini analysis attempt ${attempt} failed with gemini-flash-latest:`, errStr);
-
-        const is503 = errStr.includes('503') || errStr.toLowerCase().includes('service unavailable') || errStr.toLowerCase().includes('high demand') || errStr.toLowerCase().includes('overloaded');
-        if (is503 && attempt < maxAttempts) {
-          onProgress?.('Servidor de Google ocupado (503). Reintentando en 2 segundos...');
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          continue;
-        }
-        break;
-      }
-    }
-
+    const rawText = response.text || '';
     if (!rawText) {
-      console.error('Gemini analysis failed:', lastError);
-      const msg = lastError?.message || '';
-      if (msg.includes('quota') || msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
-        throw new Error('Límite de cuota excedido en la API de Gemini (429). Por favor espera unos minutos o utiliza una API Key con facturación.');
-      }
-      if (msg.includes('503') || msg.toLowerCase().includes('service unavailable')) {
-        throw new Error('El servidor de Gemini está temporalmente ocupado (503). Por favor intenta de nuevo en un momento.');
-      }
-      if (msg.includes('404') || msg.includes('not found') || msg.includes('no longer available')) {
-        throw new Error('El modelo solicitado no está disponible. Se configuró gemini-flash-latest.');
-      }
-      throw lastError || new Error('No se pudo procesar la imagen con la API de Gemini.');
+      throw new Error('La respuesta de Gemini está vacía.');
     }
+
+    onProgress?.('Estructurando acciones bajo modelo de Liderazgo Situacional (SLII)...');
+
+    const cleanedJson = extractJsonString(rawText);
+    const parsedReport = JSON.parse(cleanedJson) as ExecutiveReport;
+
+    if (!parsedReport.competencias || !parsedReport.acciones || !parsedReport.metadata) {
+      throw new Error('Estructura de respuesta incompleta');
+    }
+
+    return parsedReport;
+  } catch (err: any) {
+    console.error('Error in direct Gemini client analysis:', err);
+    const msg = String(err?.message || err);
+    if (msg.includes('quota') || msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
+      throw new Error('Límite de cuota excedido en la API de Gemini (429). Por favor configura tu propia API Key con facturación.');
+    }
+    if (msg.includes('503') || msg.toLowerCase().includes('service unavailable')) {
+      throw new Error('El servidor de Gemini está temporalmente ocupado (503). Por favor intenta de nuevo en un momento.');
+    }
+    if (msg.includes('404') || msg.includes('not found')) {
+      throw new Error('El modelo de Gemini solicitado no está disponible.');
+    }
+    throw err;
   }
-
-  onProgress?.('Estructurando acciones bajo modelo de Liderazgo Situacional (SLII)...');
-
-  const cleanedJson = extractJsonString(rawText);
-  const parsedReport = JSON.parse(cleanedJson) as ExecutiveReport;
-
-  // Validate basic shape
-  if (!parsedReport.competencias || !parsedReport.acciones || !parsedReport.metadata) {
-    throw new Error('Estructura de respuesta incompleta');
-  }
-
-  return parsedReport;
 }
 
 function extractJsonString(text: string): string {
   const trimmed = text.trim();
-  // Strip markdown code fences if model wrapped response
   if (trimmed.startsWith('```json')) {
     return trimmed.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
   }
