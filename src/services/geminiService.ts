@@ -230,94 +230,39 @@ export async function analyzeWheelImage(
 
   onProgress?.('Identificando Puntos Palanca y Puntos Impacto...');
 
-  // Primary model as mandated by Google AI Studio API: gemini-3.8-flash
-  const PRIMARY_MODEL = 'gemini-3.8-flash';
+  // Primary model configured to gemini-flash-lite-latest for high quota and reliability
+  const PRIMARY_MODEL = 'gemini-flash-lite-latest';
   let rawText = '';
   let lastError: any = null;
 
-  // List of models to try in order
-  const modelsToAttempt = [PRIMARY_MODEL, 'gemini-flash-latest'];
-
-  for (const modelName of modelsToAttempt) {
-    try {
-      // 1. Official SDK call with GoogleGenAI
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: [
-          {
-            parts: [
-              {
-                inlineData: {
-                  mimeType: mimeType || 'image/jpeg',
-                  data: cleanBase64
-                }
-              },
-              {
-                text: `${ANALYSIS_SYSTEM_PROMPT}\n\nAnaliza detenidamente la imagen adjunta y genera el objeto JSON completo según las instrucciones.`
+  try {
+    const response = await ai.models.generateContent({
+      model: PRIMARY_MODEL,
+      contents: [
+        {
+          parts: [
+            {
+              inlineData: {
+                mimeType: mimeType || 'image/jpeg',
+                data: cleanBase64
               }
-            ]
-          }
-        ],
-        config: {
-          temperature: 0.2,
-          responseMimeType: 'application/json'
-        }
-      });
-
-      rawText = response.text || '';
-      if (rawText) break;
-    } catch (sdkErr: any) {
-      lastError = sdkErr;
-      console.warn(`SDK call on ${modelName} returned error, attempting direct REST:`, sdkErr?.message || sdkErr);
-
-      // 2. Direct REST call with x-goog-api-key header (compatible with AQ. keys in browser environments)
-      try {
-        const endpointUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
-        const restResponse = await fetch(endpointUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  {
-                    inlineData: {
-                      mimeType: mimeType || 'image/jpeg',
-                      data: cleanBase64
-                    }
-                  },
-                  {
-                    text: `${ANALYSIS_SYSTEM_PROMPT}\n\nAnaliza detenidamente la imagen adjunta y genera el objeto JSON completo según las instrucciones.`
-                  }
-                ]
-              }
-            ],
-            generationConfig: {
-              temperature: 0.2,
-              responseMimeType: 'application/json'
+            },
+            {
+              text: `${ANALYSIS_SYSTEM_PROMPT}\n\nAnaliza detenidamente la imagen adjunta y genera el objeto JSON completo según las instrucciones.`
             }
-          })
-        });
-
-        if (restResponse.ok) {
-          const data = await restResponse.json();
-          rawText = data.candidates?.[0]?.content?.parts
-            ?.map((p: any) => p.text)
-            .filter(Boolean)
-            .join('') || '';
-          if (rawText) break;
-        } else {
-          const errJson = await restResponse.json().catch(() => ({}));
-          const errMsg = errJson?.error?.message || `HTTP ${restResponse.status}: ${restResponse.statusText}`;
-          lastError = new Error(errMsg);
+          ]
         }
-      } catch (restErr: any) {
-        lastError = restErr;
+      ],
+      config: {
+        temperature: 0.2,
+        responseMimeType: 'application/json'
       }
-    }
+    });
+
+    rawText = response.text || '';
+  } catch (sdkErr: any) {
+    lastError = sdkErr;
+    console.error('Gemini analysis failed with gemini-flash-lite-latest:', sdkErr?.message || sdkErr);
   }
 
   if (!rawText) {
