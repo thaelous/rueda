@@ -523,6 +523,7 @@ SEGUIMIENTO Y METODOLOGÍA
                       onEditRequested={() => setIsAdjustModalOpen(true)}
                       selectedCompetencyId={selectedCompetencyId}
                       onSelectCompetency={(id) => setSelectedCompetencyId(id)}
+                      onReportChange={handleSaveAdjustedReport}
                     />
                   ) : (
                     <div className="w-full max-w-[850px] bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center flex flex-col items-center justify-center min-h-[500px]">
@@ -582,6 +583,7 @@ SEGUIMIENTO Y METODOLOGÍA
                     onEditRequested={() => setIsAdjustModalOpen(true)}
                     selectedCompetencyId={selectedCompetencyId}
                     onSelectCompetency={(id) => setSelectedCompetencyId(id)}
+                    onReportChange={handleSaveAdjustedReport}
                   />
                 ) : (
                   <div className="w-full max-w-[850px] bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center">
@@ -614,6 +616,7 @@ SEGUIMIENTO Y METODOLOGÍA
                 <ExecutiveLetterSheet
                   report={item.report}
                   id={`cuartilla-sheet-${item.id}`}
+                  isBatchMode={true}
                 />
               </div>
             ))}

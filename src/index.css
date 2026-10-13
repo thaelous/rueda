@@ -156,4 +156,17 @@
     background-color: #fff1f2 !important;
     border-color: #fecdd3 !important;
   }
+
+  .no-print {
+    display: none !important;
+  }
+
+  [contenteditable],
+  [contenteditable="true"] {
+    outline: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    background-color: transparent !important;
+  }
 }

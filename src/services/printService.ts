@@ -182,14 +182,32 @@ export function generatePrintDocument(title: string, innerHtml: string): string 
       padding-top: 6px !important;
     }
 
+    /* Strip editing indicators, outlines and focus rings completely on print */
+    [contenteditable],
+    [contenteditable="true"] {
+      outline: none !important;
+      border: none !important;
+      box-shadow: none !important;
+      background: transparent !important;
+      background-color: transparent !important;
+    }
+
     /* Print utility */
     @media print {
       body {
         padding: 0 !important;
         margin: 0 !important;
       }
-      .no-print, button {
+      .no-print, button, [role="button"] {
         display: none !important;
+      }
+      [contenteditable],
+      [contenteditable="true"] {
+        outline: none !important;
+        border: none !important;
+        box-shadow: none !important;
+        background: transparent !important;
+        background-color: transparent !important;
       }
     }
   </style>
